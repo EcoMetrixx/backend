@@ -1,0 +1,145 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "📦 Enter DockerShell",
+      "type": "shell",
+      "command": "docker-compose exec backend sh",
+      "problemMatcher": [],
+      "detail": "Accede a la shell dentro del contenedor 'api_ecometrix' asociado al servicio 'backend'.",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "🚀 Start API Service (npm start dev)",
+      "type": "shell",
+      "command": "docker-compose exec backend sh -c 'npm run start:dev'",
+      "problemMatcher": [],
+      "detail": "Entra al contenedor de 'backend' y ejecuta 'npm run dev' para levantar el servicio de la API.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "▶️ Start API Container",
+      "type": "shell",
+      "command": "docker-compose up -d backend",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Levanta el contenedor del servicio 'backend' (api_ecometrix)."
+    },
+    {
+      "label": "⏸️ Stop API Container",
+      "type": "shell",
+      "command": "docker-compose stop backend",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Solo detiene el contenedor del servicio 'backend' (api_ecometrix) sin eliminarlo.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "🔄 Start Database",
+      "type": "shell",
+      "command": "docker-compose up -d database",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Levanta el contenedor de la base de datos (db_ecometrix_local)."
+    },
+    {
+      "label": "⏸️ Stop Database",
+      "type": "shell",
+      "command": "docker-compose stop database",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Solo detiene el contenedor del servicio 'backend' (api_ecometrix) sin eliminarlo.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "⏹️ Stop All Containers",
+      "type": "shell",
+      "command": "docker-compose stop",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Detiene todos los contenedores, redes, volúmenes, etc., definidos en el 'docker-compose.yml'.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "🔄 Restart API",
+      "type": "shell",
+      "command": "docker-compose restart backend",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Reinicia el contenedor del servicio 'backend' (api_ecometrix)."
+    },
+    {
+      "label": "🔨 Rebuild Containers",
+      "type": "shell",
+      "command": "docker-compose up --build -d",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Reconstruye todos los contenedores y los levanta en segundo plano."
+    },
+    {
+      "label": "🧹 Clean Docker Containers",
+      "type": "shell",
+      "command": "docker system prune -f",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "problemMatcher": [],
+      "detail": "Elimina contenedores no utilizados, imágenes huérfanas, redes no utilizadas, etc."
+    },
+    {
+      "label": "⬇️ Install Dependencies",
+      "type": "shell",
+      "command": "docker-compose exec backend sh -c 'npm install'",
+      "problemMatcher": [],
+      "detail": "Instala las dependencias del proyecto dentro del package.json"
+    }
+  ]
+}
