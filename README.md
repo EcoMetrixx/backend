@@ -158,6 +158,10 @@ backend/
 │   ├─ application/    # Casos de uso
 │   ├─ infrastructure/ # Repositorios, DB, adaptadores
 │   ├─ presentation/   # Controladores, rutas, DTOs
+│   ├─ auth/           # Módulo de autenticación JWT
+│   ├─ users/          # Módulo de usuarios
+│   ├─ common/         # Guards, decorators, etc.
+│   ├─ database/       # Seeds y migraciones
 │   └─ main.ts         # Bootstrapping de NestJS
 │
 ├─ node_modules/
@@ -167,3 +171,91 @@ backend/
 ├─ package.json
 └─ tsconfig.json
 ```
+
+---
+
+## 🔐 Autenticación JWT
+
+El backend incluye un sistema completo de autenticación con JWT que incluye:
+
+### Endpoints disponibles
+
+- `POST /api/auth/login` - Iniciar sesión
+- `POST /api/auth/logout` - Cerrar sesión (requiere autenticación)
+- `POST /api/auth/refresh` - Refrescar token (requiere autenticación)
+- `POST /api/auth/password-reset` - Solicitar recuperación de contraseña
+- `POST /api/auth/password-reset/confirm` - Confirmar recuperación de contraseña
+
+### Configuración de variables de entorno
+
+Crea un archivo `.env` en la raíz del proyecto con las siguientes variables:
+
+```env
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/crm_db
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-change-in-production
+JWT_EXPIRES_IN=3600
+
+# Server
+PORT=3000
+NODE_ENV=development
+
+# Frontend URL (for CORS)
+FRONTEND_URL=http://localhost:3001
+
+# Email (opcional para desarrollo)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+```
+
+### Usuario de prueba
+
+Para crear el usuario de prueba, ejecuta:
+
+```bash
+npm run seed
+```
+
+Esto creará un usuario con:
+- **Email**: `user@dwduqs.com`
+- **Password**: `miVivienda#2024`
+- **Name**: `Juan Torres`
+- **Role**: `Asesor Hipotecario`
+
+### Documentación de la API
+
+Una vez que el servidor esté corriendo, puedes acceder a la documentación de Swagger en:
+- `http://localhost:3000/api`
+
+---
+
+## 🚀 Inicio rápido
+
+1. **Configurar variables de entorno:**
+   ```bash
+   cp .env.example .env
+   # Edita .env con tus credenciales
+   ```
+
+2. **Instalar dependencias:**
+   ```bash
+   npm install
+   ```
+
+3. **Asegúrate de que PostgreSQL esté corriendo** (o usa Docker)
+
+4. **Crear usuario de prueba:**
+   ```bash
+   npm run seed
+   ```
+
+5. **Iniciar el servidor:**
+   ```bash
+   npm run start:dev
+   ```
+
+El servidor estará disponible en `http://localhost:3000/api`
