@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable global validation
+  // Global validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -15,9 +15,10 @@ async function bootstrap() {
     }),
   );
 
-  // Enable CORS
+  // CORS
   app.enableCors();
 
+  // Swagger
   const config = new DocumentBuilder()
     .setTitle('EcoMetrix API')
     .setDescription('API for real estate financial simulations')
@@ -25,10 +26,13 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
 
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, documentFactory);
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
 
-  await app.listen(process.env.PORT ? parseInt(process.env.PORT) : 9000);
+  // Port (Render)
+  const port = Number(process.env.PORT) || 9000;
+  await app.listen(port);
+  console.log(`🚀 Server running on port ${port}`);
 }
 
 bootstrap();
