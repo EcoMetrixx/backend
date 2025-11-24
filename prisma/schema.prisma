@@ -1,0 +1,126 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  //url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  dni       String?  // Agregar DNI
+  phone     String?  // Agregar teléfono
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  simulations Simulation[]
+}
+
+model Client {
+  id                String   @id @default(uuid())
+  firstName         String
+  lastName          String
+  dni               String   @unique
+  birthDate         DateTime
+  civilStatus       String
+  email             String?
+  phone             String?
+  address           String?
+  region            String?
+  province          String?
+  employmentType    String
+  occupation        String?
+  jobSeniority      Int?
+  familyLoad        Int
+  familyIncome      Float
+  savings           Float
+  debts             Float
+  firstHome         Boolean
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  eligibilityResults Eligibility[]
+  simulations        Simulation[]
+}
+
+model Eligibility {
+  id          String   @id @default(uuid())
+  clientId    String
+  program     String
+  isEligible  Boolean
+  reasons     Json?
+  createdAt   DateTime @default(now())
+
+  client      Client   @relation(fields: [clientId], references: [id])
+}
+
+model Property {
+  id              String     @id @default(uuid())
+  name            String
+  price           Float
+  location        String
+  region          String
+  province        String
+  type            String     // Casa, Departamento, Terreno, etc.
+  description     String?
+  images          Json?      // Array de URLs de imágenes
+  status          String     @default("disponible") // disponible, vendido, reservado
+  compatibleWith  String?    // "Mi Vivienda", "Techo Propio", "Ambos"
+  bankId          String?    // Banco que financia esta propiedad
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  bank            Bank?      @relation(fields: [bankId], references: [id])
+  simulations     Simulation[]
+}
+
+model Bank {
+  id              String     @id @default(uuid())
+  name            String     @unique
+  interestRate    Float      // Tasa de interés base
+  description     String?
+  tea             Float?     // TEA (Tasa Efectiva Anual)
+  tem             Float?     // TEM (Tasa Efectiva Mensual)
+  adminFees       Float?     // Gastos administrativos (%)
+  gracePeriod     Int?       // Periodo de gracia en meses
+  evaluationFee   Float?     // Comisión de evaluación
+  lifeInsurance   Float?     // Seguro de desgravamen (%)
+  availableTerms  Json?      // Plazos disponibles [12, 24, 36, ...]
+  maxFinancing    Float?     // Máximo porcentaje de financiamiento
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  properties      Property[]
+  simulations     Simulation[]
+}
+
+model Simulation {
+  id             String   @id @default(uuid())
+  userId         String
+  clientId       String
+  propertyId     String?
+  bankId         String?
+  program        String
+  amount         Float
+  monthlyPayment Float
+  term           Int
+  result         Json
+  createdAt      DateTime @default(now())
+
+  user       User      @relation(fields: [userId], references: [id])
+  client     Client    @relation(fields: [clientId], references: [id])
+  property   Property? @relation(fields: [propertyId], references: [id])
+  bank       Bank?     @relation(fields: [bankId], references: [id])
+}
