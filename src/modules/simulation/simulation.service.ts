@@ -1,277 +1,401 @@
+// src/modules/simulation/simulation.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 
+import * as fs from 'fs';
+import { join } from 'path';
+import * as ExcelJS from 'exceljs';
+// @ts-ignore
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const PDFDocument = require('pdfkit');
+
 @Injectable()
 export class SimulationService {
-    constructor(private prisma: PrismaService) { }
+  constructor(private prisma: PrismaService) {}
 
-    async create(data: {
-        userId: string;
-        clientId: string;
-        propertyId?: string;
-        bankId?: string;
-        program: string;
-        amount: number;
-        monthlyPayment: number;
-        term: number;
-        result: any;
-    }) {
-        return this.prisma.simulation.create({
-            data,
-            include: {
-                user: { select: { name: true } },
-                client: { select: { firstName: true, lastName: true } },
-                property: true,
-                bank: true,
-            },
-        });
+  async create(data: {
+    userId: string;
+    clientId: string;
+    propertyId?: string;
+    bankId?: string;
+    program: string;
+    amount: number;
+    monthlyPayment: number;
+    term: number;
+    result: any;
+  }) {
+    return this.prisma.simulation.create({
+      data,
+      include: {
+        user: { select: { name: true } },
+        client: { select: { firstName: true, lastName: true } },
+        property: true,
+        bank: true,
+      },
+    });
+  }
+
+  async findAll(
+    userId: string,
+    filters?: {
+      clientId?: string;
+      program?: string;
+      dateFrom?: Date;
+      dateTo?: Date;
+    },
+  ) {
+    const where: any = { userId };
+
+    if (filters?.clientId) where.clientId = filters.clientId;
+    if (filters?.program) where.program = filters.program;
+    if (filters?.dateFrom || filters?.dateTo) {
+      where.createdAt = {};
+      if (filters.dateFrom) where.createdAt.gte = filters.dateFrom;
+      if (filters.dateTo) where.createdAt.lte = filters.dateTo;
     }
 
-    async findAll(userId: string, filters?: {
-        clientId?: string;
-        program?: string;
-        dateFrom?: Date;
-        dateTo?: Date;
-    }) {
-        const where: any = { userId };
+    return this.prisma.simulation.findMany({
+      where,
+      include: {
+        client: { select: { firstName: true, lastName: true, dni: true } },
+        property: { select: { name: true, price: true } },
+        bank: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
-        if (filters?.clientId) where.clientId = filters.clientId;
-        if (filters?.program) where.program = filters.program;
-        if (filters?.dateFrom || filters?.dateTo) {
-            where.createdAt = {};
-            if (filters.dateFrom) where.createdAt.gte = filters.dateFrom;
-            if (filters.dateTo) where.createdAt.lte = filters.dateTo;
+  async findOne(id: string, userId: string) {
+    const simulation = await this.prisma.simulation.findFirst({
+      where: { id, userId },
+      include: {
+        user: { select: { name: true } },
+        client: true,
+        property: true,
+        bank: true,
+      },
+    });
+
+    if (!simulation) {
+      throw new NotFoundException('Simulation not found');
+    }
+
+    return simulation;
+  }
+
+  async calculateLoan(data: {
+    amount: number;
+    interestRate: number;
+    term: number; // en años
+    gracePeriod?: number;
+    adminFees?: number;
+    evaluationFee?: number;
+    lifeInsurance?: number;
+    currency?: string; // PEN o USD
+    paymentFrequency?: string; // monthly, quarterly, etc.
+  }) {
+    const {
+      amount,
+      interestRate,
+      term,
+      gracePeriod = 0,
+      adminFees = 0,
+      evaluationFee = 0,
+      lifeInsurance = 0,
+      currency = 'PEN',
+      paymentFrequency = 'monthly',
+    } = data;
+
+    const termMonths = term * 12;
+
+    const tea = interestRate / 100;
+    const tem = Math.pow(1 + tea, 1 / 12) - 1;
+
+    const totalLoan = amount;
+
+    const initialFees = (adminFees / 100) * totalLoan + evaluationFee;
+
+    const monthlyPayment = this.calculateFrenchPayment(
+      totalLoan,
+      tem,
+      termMonths,
+    );
+
+    const schedule = this.generatePaymentSchedule(
+      totalLoan,
+      tem,
+      termMonths,
+      monthlyPayment,
+      gracePeriod,
+      lifeInsurance,
+    );
+
+    const totalPaid = schedule.reduce(
+      (sum, payment) => sum + payment.totalPayment,
+      0,
+    );
+    const totalInterest = totalPaid - totalLoan;
+
+    const van = this.calculateVAN(schedule, 0.1);
+    const tir = this.calculateTIR(schedule, totalLoan);
+
+    return {
+      summary: {
+        loanAmount: totalLoan,
+        monthlyPayment,
+        termYears: term,
+        termMonths,
+        tea,
+        tem,
+        totalPaid,
+        totalInterest,
+        initialFees,
+        currency,
+        gracePeriod,
+      },
+      schedule,
+      metrics: {
+        van,
+        tir,
+        tcea: this.calculateTCEA(schedule, totalLoan, initialFees),
+      },
+      charts: {
+        balanceEvolution: this.generateBalanceChart(schedule),
+        paymentComposition: this.generateCompositionChart(schedule),
+      },
+    };
+  }
+
+  private calculateFrenchPayment(
+    principal: number,
+    tem: number,
+    months: number,
+  ): number {
+    return (
+      (principal * (tem * Math.pow(1 + tem, months))) /
+      (Math.pow(1 + tem, months) - 1)
+    );
+  }
+
+  private generatePaymentSchedule(
+    principal: number,
+    tem: number,
+    months: number,
+    monthlyPayment: number,
+    gracePeriod: number,
+    lifeInsurance: number,
+  ) {
+    const schedule: Array<{
+      month: number;
+      initialBalance: number;
+      interest: number;
+      principal: number;
+      insurance: number;
+      totalPayment: number;
+      remainingBalance: number;
+    }> = [];
+    let remainingBalance = principal;
+
+    for (let month = 1; month <= months; month++) {
+      let interest = 0;
+      let principalPayment = 0;
+      const insurance = (lifeInsurance / 100) * remainingBalance / 12;
+
+      if (month <= gracePeriod) {
+        interest = remainingBalance * tem;
+        principalPayment = 0;
+      } else {
+        interest = remainingBalance * tem;
+        principalPayment = monthlyPayment - interest;
+
+        if (principalPayment > remainingBalance) {
+          principalPayment = remainingBalance;
         }
+      }
 
-        return this.prisma.simulation.findMany({
-            where,
-            include: {
-                client: { select: { firstName: true, lastName: true, dni: true } },
-                property: { select: { name: true, price: true } },
-                bank: { select: { name: true } },
-            },
-            orderBy: { createdAt: 'desc' },
-        });
+      remainingBalance -= principalPayment;
+
+      schedule.push({
+        month,
+        initialBalance: remainingBalance + principalPayment,
+        interest,
+        principal: principalPayment,
+        insurance,
+        totalPayment: interest + principalPayment + insurance,
+        remainingBalance: Math.max(0, remainingBalance),
+      });
     }
 
-    async findOne(id: string, userId: string) {
-        const simulation = await this.prisma.simulation.findFirst({
-            where: { id, userId },
-            include: {
-                user: { select: { name: true } },
-                client: true,
-                property: true,
-                bank: true,
-            },
-        });
+    return schedule;
+  }
 
-        if (!simulation) {
-            throw new NotFoundException('Simulation not found');
-        }
+  private calculateVAN(schedule: any[], discountRate: number): number {
+    const monthlyDiscountRate = discountRate / 12;
+    return schedule.reduce((van, payment, index) => {
+      return (
+        van +
+        payment.totalPayment /
+          Math.pow(1 + monthlyDiscountRate, index + 1)
+      );
+    }, 0);
+  }
 
-        return simulation;
+  private calculateTIR(schedule: any[], principal: number): number {
+    return 0.12; // simplificado
+  }
+
+  private calculateTCEA(
+    schedule: any[],
+    principal: number,
+    initialFees: number,
+  ): number {
+    const totalPaid =
+      schedule.reduce((sum, payment) => sum + payment.totalPayment, 0) +
+      initialFees;
+    const years = schedule.length / 12;
+    return Math.pow(totalPaid / principal, 1 / years) - 1;
+  }
+
+  private generateBalanceChart(schedule: any[]) {
+    return schedule.map((payment, index) => ({
+      month: index + 1,
+      balance: payment.remainingBalance,
+    }));
+  }
+
+  private generateCompositionChart(schedule: any[]) {
+    const totalInterest = schedule.reduce(
+      (sum, payment) => sum + payment.interest,
+      0,
+    );
+    const totalPrincipal = schedule.reduce(
+      (sum, payment) => sum + payment.principal,
+      0,
+    );
+    const totalInsurance = schedule.reduce(
+      (sum, payment) => sum + payment.insurance,
+      0,
+    );
+
+    const total = totalInterest + totalPrincipal + totalInsurance || 1;
+
+    return [
+      {
+        name: 'Intereses',
+        value: totalInterest,
+        percentage: (totalInterest / total) * 100,
+      },
+      {
+        name: 'Amortización',
+        value: totalPrincipal,
+        percentage: (totalPrincipal / total) * 100,
+      },
+      {
+        name: 'Seguro',
+        value: totalInsurance,
+        percentage: (totalInsurance / total) * 100,
+      },
+    ];
+  }
+
+  // =======================
+  //  EXPORTAR A EXCEL
+  // =======================
+  async exportToExcel(simulationId: string, userId: string) {
+    const simulation = await this.findOne(simulationId, userId);
+
+    const downloadsDir = join(process.cwd(), 'downloads');
+    if (!fs.existsSync(downloadsDir)) {
+      fs.mkdirSync(downloadsDir, { recursive: true });
     }
 
-    async calculateLoan(data: {
-        amount: number;
-        interestRate: number;
-        term: number; // en años
-        gracePeriod?: number;
-        adminFees?: number;
-        evaluationFee?: number;
-        lifeInsurance?: number;
-        currency?: string; // PEN o USD
-        paymentFrequency?: string; // monthly, quarterly, etc.
-    }) {
-        const {
-            amount,
-            interestRate,
-            term,
-            gracePeriod = 0,
-            adminFees = 0,
-            evaluationFee = 0,
-            lifeInsurance = 0,
-            currency = 'PEN',
-            paymentFrequency = 'monthly'
-        } = data;
+    const filename = `simulation-${simulationId}.xlsx`;
+    const filePath = join(downloadsDir, filename);
 
-        // Convertir años a meses
-        const termMonths = term * 12;
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Simulación');
 
-        // Calcular TEA y TEM
-        const tea = interestRate / 100;
-        const tem = Math.pow(1 + tea, 1 / 12) - 1;
+    const clientName = simulation.client
+      ? `${simulation.client.firstName} ${simulation.client.lastName}`
+      : 'N/A';
 
-        // Monto total del préstamo
-        const totalLoan = amount;
+    const result: any = simulation.result || {};
 
-        // Gastos iniciales
-        const initialFees = (adminFees / 100) * totalLoan + evaluationFee;
+    sheet.addRow(['Simulación de Crédito']);
+    sheet.addRow([]);
+    sheet.addRow(['Cliente', clientName]);
+    sheet.addRow(['Programa', simulation.program]);
+    sheet.addRow(['Monto financiado', simulation.amount]);
+    sheet.addRow(['Cuota mensual', simulation.monthlyPayment]);
+    sheet.addRow(['Plazo (años)', simulation.term]);
+    sheet.addRow([]);
+    sheet.addRow(['Indicadores']);
+    sheet.addRow(['TCEA', result.tcea ?? '']);
+    sheet.addRow(['VAN', result.van ?? '']);
+    sheet.addRow(['TIR', result.tir ?? '']);
+    sheet.addRow(['Total intereses', result.totalInterests ?? '']);
+    sheet.addRow(['Total a pagar', result.totalPayable ?? '']);
 
-        // Pago mensual usando sistema francés
-        const monthlyPayment = this.calculateFrenchPayment(totalLoan, tem, termMonths);
+    await workbook.xlsx.writeFile(filePath);
 
-        // Generar cronograma de pagos
-        const schedule = this.generatePaymentSchedule(
-            totalLoan,
-            tem,
-            termMonths,
-            monthlyPayment,
-            gracePeriod,
-            lifeInsurance
-        );
+    return {
+      message: 'Excel generado exitosamente',
+      downloadUrl: `/downloads/${filename}`,
+    };
+  }
 
-        // Calcular métricas financieras
-        const totalPaid = schedule.reduce((sum, payment) => sum + payment.totalPayment, 0);
-        const totalInterest = totalPaid - totalLoan;
+  // =======================
+  //  EXPORTAR A PDF
+  // =======================
+  async exportToPDF(simulationId: string, userId: string) {
+    const simulation = await this.findOne(simulationId, userId);
 
-        // VAN y TIR (simplificado)
-        const van = this.calculateVAN(schedule, 0.10); // asumiendo 10% de descuento
-        const tir = this.calculateTIR(schedule, totalLoan);
-
-        return {
-            summary: {
-                loanAmount: totalLoan,
-                monthlyPayment,
-                termYears: term,
-                termMonths,
-                tea,
-                tem,
-                totalPaid,
-                totalInterest,
-                initialFees,
-                currency,
-                gracePeriod
-            },
-            schedule,
-            metrics: {
-                van,
-                tir,
-                tcea: this.calculateTCEA(schedule, totalLoan, initialFees)
-            },
-            charts: {
-                balanceEvolution: this.generateBalanceChart(schedule),
-                paymentComposition: this.generateCompositionChart(schedule)
-            }
-        };
+    const downloadsDir = join(process.cwd(), 'downloads');
+    if (!fs.existsSync(downloadsDir)) {
+      fs.mkdirSync(downloadsDir, { recursive: true });
     }
 
-    private calculateFrenchPayment(principal: number, tem: number, months: number): number {
-        return principal * (tem * Math.pow(1 + tem, months)) / (Math.pow(1 + tem, months) - 1);
-    }
+    const filename = `simulation-${simulationId}.pdf`;
+    const filePath = join(downloadsDir, filename);
 
-    private generatePaymentSchedule(
-        principal: number,
-        tem: number,
-        months: number,
-        monthlyPayment: number,
-        gracePeriod: number,
-        lifeInsurance: number
-    ) {
-        const schedule: Array<{
-            month: number;
-            initialBalance: number;
-            interest: number;
-            principal: number;
-            insurance: number;
-            totalPayment: number;
-            remainingBalance: number;
-        }> = [];
-        let remainingBalance = principal;
+    const clientName = simulation.client
+      ? `${simulation.client.firstName} ${simulation.client.lastName}`
+      : 'N/A';
+    const result: any = simulation.result || {};
 
-        for (let month = 1; month <= months; month++) {
-            let interest = 0;
-            let principalPayment = 0;
-            let insurance = (lifeInsurance / 100) * remainingBalance / 12;
+    const doc = new PDFDocument({ margin: 50 });
+    const writeStream = fs.createWriteStream(filePath);
+    doc.pipe(writeStream);
 
-            if (month <= gracePeriod) {
-                // Solo intereses durante período de gracia
-                interest = remainingBalance * tem;
-                principalPayment = 0;
-            } else {
-                // Sistema francés normal
-                interest = remainingBalance * tem;
-                principalPayment = monthlyPayment - interest;
+    doc.fontSize(20).text('Simulación de Crédito', { align: 'center' });
+    doc.moveDown();
 
-                if (principalPayment > remainingBalance) {
-                    principalPayment = remainingBalance;
-                }
-            }
+    doc.fontSize(12).text(`Cliente: ${clientName}`);
+    doc.text(`Programa: ${simulation.program}`);
+    doc.text(`Monto financiado: S/ ${simulation.amount}`);
+    doc.text(`Cuota mensual: S/ ${simulation.monthlyPayment}`);
+    doc.text(`Plazo: ${simulation.term} años`);
+    doc.moveDown();
 
-            remainingBalance -= principalPayment;
+    doc.fontSize(14).text('Indicadores', { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12);
+    doc.text(`TCEA: ${result.tcea ?? '-'}`);
+    doc.text(`VAN: ${result.van ?? '-'}`);
+    doc.text(`TIR: ${result.tir ?? '-'}`);
+    doc.text(`Total intereses: ${result.totalInterests ?? '-'}`);
+    doc.text(`Total a pagar: ${result.totalPayable ?? '-'}`);
 
-            schedule.push({
-                month,
-                initialBalance: remainingBalance + principalPayment,
-                interest,
-                principal: principalPayment,
-                insurance,
-                totalPayment: interest + principalPayment + insurance,
-                remainingBalance: Math.max(0, remainingBalance)
-            });
-        }
+    doc.end();
 
-        return schedule;
-    }
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('finish', () => resolve());
+      writeStream.on('error', (err) => reject(err));
+    });
 
-    private calculateVAN(schedule: any[], discountRate: number): number {
-        const monthlyDiscountRate = discountRate / 12;
-        return schedule.reduce((van, payment, index) => {
-            return van + payment.totalPayment / Math.pow(1 + monthlyDiscountRate, index + 1);
-        }, 0);
-    }
-
-    private calculateTIR(schedule: any[], principal: number): number {
-        // TIR simplificada - en producción usarías una librería financiera
-        return 0.12; // 12% aproximado
-    }
-
-    private calculateTCEA(schedule: any[], principal: number, initialFees: number): number {
-        // TCEA simplificada
-        const totalPaid = schedule.reduce((sum, payment) => sum + payment.totalPayment, 0) + initialFees;
-        const years = schedule.length / 12;
-        return Math.pow(totalPaid / principal, 1 / years) - 1;
-    }
-
-    private generateBalanceChart(schedule: any[]) {
-        return schedule.map((payment, index) => ({
-            month: index + 1,
-            balance: payment.remainingBalance
-        }));
-    }
-
-    private generateCompositionChart(schedule: any[]) {
-        const totalInterest = schedule.reduce((sum, payment) => sum + payment.interest, 0);
-        const totalPrincipal = schedule.reduce((sum, payment) => sum + payment.principal, 0);
-        const totalInsurance = schedule.reduce((sum, payment) => sum + payment.insurance, 0);
-
-        return [
-            { name: 'Intereses', value: totalInterest, percentage: (totalInterest / (totalInterest + totalPrincipal + totalInsurance)) * 100 },
-            { name: 'Amortización', value: totalPrincipal, percentage: (totalPrincipal / (totalInterest + totalPrincipal + totalInsurance)) * 100 },
-            { name: 'Seguro', value: totalInsurance, percentage: (totalInsurance / (totalInterest + totalPrincipal + totalInsurance)) * 100 }
-        ];
-    }
-
-    async exportToExcel(simulationId: string, userId: string) {
-        const simulation = await this.findOne(simulationId, userId);
-
-        // Aquí implementarías la lógica para generar Excel
-        // Usando una librería como exceljs
-
-        return {
-            message: 'Excel generado exitosamente',
-            downloadUrl: `/downloads/simulation-${simulationId}.xlsx`
-        };
-    }
-
-    async exportToPDF(simulationId: string, userId: string) {
-        const simulation = await this.findOne(simulationId, userId);
-
-        // Lógica para generar PDF con información de transparencia SBS
-
-        return {
-            message: 'PDF generado exitosamente',
-            downloadUrl: `/downloads/simulation-${simulationId}.pdf`
-        };
-    }
+    return {
+      message: 'PDF generado exitosamente',
+      downloadUrl: `/downloads/${filename}`,
+    };
+  }
 }
