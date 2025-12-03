@@ -1,207 +1,104 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService} from 'prisma/prisma.service';
+import { CreateClientDto } from './dto/create-client.dto';
+import { UpdateClientDto } from './dto/update-client.dto';
 
 @Injectable()
 export class ClientsService {
-    constructor(private prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
-    async create(data: {
-        firstName: string;
-        lastName: string;
-        dni: string;
-        birthDate: Date;
-        civilStatus: string;
-        email?: string;
-        phone?: string;
-        address?: string;
-        region?: string;
-        province?: string;
-        employmentType: string;
-        occupation?: string;
-        jobSeniority?: number;
-        familyLoad: number;
-        familyIncome: number;
-        savings: number;
-        debts: number;
-        firstHome: boolean;
-        notes?: string;
-    }) {
-        // Verificar si ya existe el cliente
+  async create(dto: CreateClientDto) {
+    // 👇 armamos el objeto data como any para no pelear con los tipos de Prisma
+    const data: any = {
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      dni: dto.dni,
+      birthDate: new Date(dto.birthDate), // birthDate ahora es string obligatorio
+      civilStatus: dto.civilStatus ?? 'Soltero',
+      email: dto.email,
+    };
 
+    // Campos opcionales solo se agregan si vienen definidos
+    if (dto.phone !== undefined) data.phone = dto.phone;
+    if (dto.address !== undefined) data.address = dto.address;
+    if (dto.region !== undefined) data.region = dto.region;
+    if (dto.province !== undefined) data.province = dto.province;
 
-        const client = await this.prisma.client.create({ data });
+    if (dto.employmentType !== undefined)
+      data.employmentType = dto.employmentType;
+    if (dto.occupation !== undefined) data.occupation = dto.occupation;
+    if (dto.jobSeniority !== undefined)
+      data.jobSeniority = dto.jobSeniority;
+    if (dto.familyLoad !== undefined) data.familyLoad = dto.familyLoad;
+    if (dto.familyIncome !== undefined)
+      data.familyIncome = dto.familyIncome;
+    if (dto.savings !== undefined) data.savings = dto.savings;
+    if (dto.debts !== undefined) data.debts = dto.debts;
+    if (dto.firstHome !== undefined) data.firstHome = dto.firstHome;
 
-        // Calcular elegibilidad automáticamente
-        await this.calculateEligibility(client.id);
+    if (dto.bonus !== undefined) data.bonus = dto.bonus;
+    if (dto.creditStatus !== undefined)
+      data.creditStatus = dto.creditStatus;
+    if (dto.notes !== undefined) data.notes = dto.notes;
 
-        return client;
+    // 👉 persistimos las selecciones del dashboard
+    if (dto.bank !== undefined) data.bank = dto.bank;
+    if (dto.propertyId !== undefined) data.propertyId = dto.propertyId;
+
+    return this.prisma.client.create({ data });
+  }
+
+  async findAll(filters: any) {
+    const where: any = {};
+
+    if (filters.bono) {
+      where.bonus = filters.bono;
     }
 
-    async findAll(filters?: {
-        bono?: string;
-        banco?: string;
-        estadoCredito?: string;
-    }) {
-        const where: any = {};
-
-        if (filters?.bono) {
-            // Filtrar por elegibilidad
-            const eligibleClients = await this.prisma.eligibility.findMany({
-                where: {
-                    program: filters.bono,
-                    isEligible: true
-                },
-                select: { clientId: true }
-            });
-            where.id = { in: eligibleClients.map(e => e.clientId) };
-        }
-
-        return this.prisma.client.findMany({
-            where,
-            include: {
-                eligibilityResults: true,
-                simulations: {
-                    include: {
-                        property: true,
-                        bank: true,
-                        user: { select: { name: true, email: true } }
-                    },
-                    orderBy: { createdAt: 'desc' },
-                    take: 5
-                }
-            }
-        });
+    if (filters.banco) {
+      where.bank = filters.banco;
     }
 
-    async findOne(id: string) {
-        const client = await this.prisma.client.findUnique({
-            where: { id },
-            include: {
-                eligibilityResults: true,
-                simulations: {
-                    include: {
-                        property: true,
-                        bank: true,
-                        user: { select: { name: true } }
-                    },
-                    orderBy: { createdAt: 'desc' }
-                }
-            }
-        });
-
-        if (!client) {
-            throw new NotFoundException('Client not found');
-        }
-
-        return client;
+    if (filters.estadoCredito) {
+      where.creditStatus = filters.estadoCredito;
     }
 
-    async update(id: string, data: Partial<any>) {
-        const client = await this.prisma.client.update({
-            where: { id },
-            data
-        });
+    return this.prisma.client.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
-        // Recalcular elegibilidad si cambiaron datos relevantes
-        await this.calculateEligibility(id);
+  async findOne(id: string) {
+    const client = await this.prisma.client.findUnique({
+      where: { id },
+    });
 
-        return client;
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
     }
 
-    private async calculateEligibility(clientId: string) {
-        const client = await this.prisma.client.findUnique({
-            where: { id: clientId }
-        });
+    return client;
+  }
 
-        if (!client) return;
+  async update(id: string, dto: UpdateClientDto) {
+    const exists = await this.prisma.client.findUnique({
+      where: { id },
+    });
 
-        // Eliminar resultados anteriores
-        await this.prisma.eligibility.deleteMany({
-            where: { clientId }
-        });
-
-        // Calcular elegibilidad para Fondo Mi Vivienda
-        const fmvEligible = this.checkFMVEligibility(client);
-        await this.prisma.eligibility.create({
-            data: {
-                clientId,
-                program: 'Fondo Mi Vivienda',
-                isEligible: fmvEligible.eligible,
-                reasons: fmvEligible.reasons
-            }
-        });
-
-        // Calcular elegibilidad para Techo Propio
-        const tpEligible = this.checkTPEligibility(client);
-        await this.prisma.eligibility.create({
-            data: {
-                clientId,
-                program: 'Techo Propio',
-                isEligible: tpEligible.eligible,
-                reasons: tpEligible.reasons
-            }
-        });
+    if (!exists) {
+      throw new NotFoundException('Cliente no encontrado');
     }
 
-    private checkFMVEligibility(client: any) {
-        const reasons: string[] = [];
+    const data: any = { ...dto };
 
-        // Reglas de elegibilidad para FMV
-        if (client.familyIncome < 2500) {
-            reasons.push('Ingreso familiar insuficiente (mínimo S/ 2,500)');
-            return { eligible: false, reasons };
-        }
-
-        if (!client.firstHome) {
-            reasons.push('Debe ser primera vivienda');
-            return { eligible: false, reasons };
-        }
-
-        if (client.employmentType === 'Desempleado') {
-            reasons.push('No puede ser desempleado');
-            return { eligible: false, reasons };
-        }
-
-        if (client.jobSeniority && client.jobSeniority < 6) {
-            reasons.push('Antigüedad laboral insuficiente (mínimo 6 meses)');
-            return { eligible: false, reasons };
-        }
-
-        const ratioEndeudamiento = client.debts / client.familyIncome;
-        if (ratioEndeudamiento > 0.4) {
-            reasons.push('Ratio de endeudamiento demasiado alto');
-            return { eligible: false, reasons };
-        }
-
-        reasons.push('Elegible para Fondo Mi Vivienda');
-        return { eligible: true, reasons };
+    if (dto.birthDate) {
+      data.birthDate = new Date(dto.birthDate);
     }
 
-    private checkTPEligibility(client: any) {
-        const reasons: string[] = [];
-
-        // Reglas de elegibilidad para Techo Propio
-        if (client.familyIncome > 3715) {
-            reasons.push('Ingreso familiar demasiado alto para Techo Propio');
-            return { eligible: false, reasons };
-        }
-
-        if (!client.firstHome) {
-            reasons.push('Debe ser primera vivienda');
-            return { eligible: false, reasons };
-        }
-
-        if (client.familyLoad < 1) {
-            reasons.push('Debe tener al menos un dependiente');
-            return { eligible: false, reasons };
-        }
-
-        if (client.savings <= 0) {
-            reasons.push('Debe tener ahorros disponibles');
-            return { eligible: false, reasons };
-        }
-
-        reasons.push('Elegible para Techo Propio');
-        return { eligible: true, reasons };
-    }
+    return this.prisma.client.update({
+      where: { id },
+      data,
+    });
+  }
 }
