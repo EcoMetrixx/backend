@@ -62,8 +62,8 @@ export class UsersService {
         }
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         user.password = hashedPassword;
-        user.passwordResetToken = undefined;
-        user.passwordResetExpires = undefined;
+        user.passwordResetToken = null;
+        user.passwordResetExpires = null;
         await this.usersRepository.save(user);
     }
 
