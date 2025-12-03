@@ -109,7 +109,10 @@ export class SimulationService {
     const termMonths = term * 12;
 
     const tea = interestRate / 100;
-    const tem = Math.pow(1 + tea, 1 / 12) - 1;
+    const tem =
+      interestRate > 3
+        ? interestRate / 100 / 12 // TNA
+        : Math.pow(1 + tea, 1 / 12) - 1; // TEA
 
     const totalLoan = amount;
 
@@ -199,7 +202,7 @@ export class SimulationService {
     for (let month = 1; month <= months; month++) {
       let interest = 0;
       let principalPayment = 0;
-      const insurance = (lifeInsurance / 100) * remainingBalance / 12;
+      const insurance = ((lifeInsurance / 100) * remainingBalance) / 12;
 
       if (month <= gracePeriod) {
         interest = remainingBalance * tem;
@@ -229,19 +232,46 @@ export class SimulationService {
     return schedule;
   }
 
-  private calculateVAN(schedule: any[], discountRate: number): number {
-    const monthlyDiscountRate = discountRate / 12;
-    return schedule.reduce((van, payment, index) => {
-      return (
-        van +
-        payment.totalPayment /
-          Math.pow(1 + monthlyDiscountRate, index + 1)
-      );
-    }, 0);
+  private calculateVAN(
+    schedule: any[],
+    discountRate: number,
+    initialInvestment: number = 0,
+  ): number {
+    const monthlyRate = discountRate / 12;
+    let van = -initialInvestment; // flujo inicial
+
+    schedule.forEach((payment, i) => {
+      van += payment.totalPayment / Math.pow(1 + monthlyRate, i + 1);
+    });
+
+    return van;
   }
 
   private calculateTIR(schedule: any[], principal: number): number {
-    return 0.12; // simplificado
+    let low = 0;
+    let high = 1;
+    let guess = 0;
+
+    const npv = (rate: number) => {
+      return (
+        -principal +
+        schedule.reduce((sum, p, i) => {
+          return sum + p.totalPayment / Math.pow(1 + rate, i + 1);
+        }, 0)
+      );
+    };
+
+    for (let i = 0; i < 100; i++) {
+      guess = (low + high) / 2;
+      const value = npv(guess);
+
+      if (Math.abs(value) < 1e-7) break;
+
+      if (value > 0) low = guess;
+      else high = guess;
+    }
+
+    return guess * 12; // TIR anual
   }
 
   private calculateTCEA(
@@ -249,11 +279,36 @@ export class SimulationService {
     principal: number,
     initialFees: number,
   ): number {
-    const totalPaid =
-      schedule.reduce((sum, payment) => sum + payment.totalPayment, 0) +
-      initialFees;
-    const years = schedule.length / 12;
-    return Math.pow(totalPaid / principal, 1 / years) - 1;
+    const cashflows = [-principal - initialFees];
+
+    schedule.forEach((p) => cashflows.push(p.totalPayment));
+
+    let rate = 0.1;
+    let lastRate = 0;
+
+    for (let i = 0; i < 50; i++) {
+      let npv = 0;
+      for (let t = 0; t < cashflows.length; t++) {
+        npv += cashflows[t] / Math.pow(1 + rate / 12, t);
+      }
+
+      if (Math.abs(npv) < 1e-6) break;
+
+      // derivada numérica
+      const epsilon = 0.0001;
+      let npv2 = 0;
+
+      for (let t = 0; t < cashflows.length; t++) {
+        npv2 += cashflows[t] / Math.pow(1 + (rate + epsilon) / 12, t);
+      }
+
+      const derivative = (npv2 - npv) / epsilon;
+
+      lastRate = rate;
+      rate = rate - npv / derivative;
+    }
+
+    return rate;
   }
 
   private generateBalanceChart(schedule: any[]) {
